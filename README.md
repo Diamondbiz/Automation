@@ -1,2 +1,2 @@
 # Automation Project
-Automation Tests
+Automation Tests for HOT apps company

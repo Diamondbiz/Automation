@@ -1,0 +1,570 @@
+
+package org.example;
+
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.regex.*;
+import java.util.Scanner;
+
+/**
+ * AutoEnvUpdater - A utility class for setting up and maintaining an automation environment.
+ * Handles installation and updates of various development tools required for test automation.
+ */
+public class AutoEnvUpdater {
+    
+    // Configuration
+    private static final String CHROME_DMG = System.getProperty("user.home") + "/Downloads/googlechrome.dmg";
+    private static final List<String> SUMMARY = new ArrayList<>();
+    private static final int TIMEOUT_SECONDS = 60;
+
+    // Configuration
+    private static final String CHROME_DMG = System.getProperty("user.home") + "/Downloads/googlechrome.dmg";
+    private static final List<String> SUMMARY = new ArrayList<>();
+    private static final int TIMEOUT_SECONDS = 60;
+    private static final int MAX_RETRIES = 3;
+    private static boolean dryRun = false;
+    
+    /**
+     * Represents the result of a tool installation/update operation.
+     */
+    private static class OperationResult {
+        final boolean success;
+        final String message;
+        final String version;
+        
+        OperationResult(boolean success, String message, String version) {
+            this.success = success;
+            this.message = message;
+            this.version = version;
+        }
+    }
+    
+    /**
+     * Executes a command with retries and proper error handling.
+     * 
+     * @param command The command to execute
+     * @param description Description of the command (for logging)
+     * @return The command output if successful
+     * @throws IOException if the command fails after all retries
+     * @throws InterruptedException if the execution is interrupted
+     */
+    private static boolean exec(String command) {
+        try {
+            ProcessBuilder processBuilder = new ProcessBuilder("/bin/bash", "-c", command);
+            processBuilder.redirectErrorStream(true);
+            
+            Process process = processBuilder.start();
+            
+            // Read the output
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    print("  | " + line);
+                }
+            }
+            
+            // Wait for the process to complete
+            boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroy();
+                throw new RuntimeException("Command timed out after " + TIMEOUT_SECONDS + " seconds: " + command);
+            }
+            
+            int exitCode = process.exitValue();
+            return exitCode == 0;
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Command failed: " + command + " - " + e.getMessage(), e);
+        }
+    
+    /**
+     * Executes a task with retry logic.
+     * 
+     * @param <T> The return type of the task
+     * @param task The task to execute
+     * @param description Description of the task (for logging)
+     * @return The result of the task
+     * @throws Exception if the task fails after all retries
+     */
+    private static void print(String msg) {
+        System.out.println(msg);
+    }
+    }
+
+    /**
+     * Main entry point for the AutoEnvUpdater.
+     * 
+     * @param args Command line arguments (optional: --dry-run to enable dry-run mode)
+     */
+    public static void main(String[] args) {
+        try {
+            // Parse command line arguments
+            for (String arg : args) {
+                if ("--dry-run".equalsIgnoreCase(arg)) {
+                    dryRun = true;
+                    Logger.warning("DRY RUN MODE ENABLED - No changes will be made");
+                }
+            }
+            
+            Logger.info("🚀 Starting Automation Environment Setup");
+            Logger.info("System: " + System.getProperty("os.name") + " " + System.getProperty("os.version"));
+            Logger.info("Java Version: " + System.getProperty("java.version"));
+            
+            // Install required tools with proper error handling and version checking
+            installTool("Homebrew", AutoEnvUpdater::installHomebrew);
+            installTool("Node.js & npm", AutoEnvUpdater::installNodeNpm);
+            installTool("Chrome", AutoEnvUpdater::installChrome);
+            installTool("Appium", AutoEnvUpdater::installAppium);
+            installTool("Selenium", AutoEnvUpdater::installSelenium);
+            installTool("UiAutomator2", AutoEnvUpdater::installUiAutomator2);
+            installTool("XCUITest", AutoEnvUpdater::installXcuitest);
+            
+            // Print summary
+            printSummary();
+            Logger.success("Setup completed successfully!");
+            System.exit(0);
+            
+        } catch (Exception e) {
+            Logger.error("Setup failed", e);
+            System.exit(1);
+        }
+        }
+    }
+
+    /**
+     * Installs a tool with proper error handling and version checking.
+     * 
+     * @param toolName The name of the tool to install
+     * @param installer The installation function to execute
+     */
+    private static void installTool(String name, Runnable installer) {
+        print("\n" + "=".repeat(50));
+        print("🔧 SETTING UP: " + name);
+        print("=".repeat(50));
+        
+        try {
+            long startTime = System.currentTimeMillis();
+            installer.run();
+            long endTime = System.currentTimeMillis();
+            String duration = String.format("%.2f", (endTime - startTime) / 1000.0);
+            
+            String successMsg = "✅ " + name + " - Completed successfully in " + duration + "s";
+            print(successMsg);
+            SUMMARY.add(successMsg);
+            
+        } catch (Exception e) {
+            String errorMsg = "❌ " + name + " - Failed: " + e.getMessage();
+            print(errorMsg);
+            SUMMARY.add(errorMsg);
+            throw e;
+        }
+    
+    /**
+     * Prints a summary of all operations performed.
+     */
+    private static void printSummary() {
+        Logger.info("\n" + "=".repeat(50));
+        Logger.info("📋 Setup Summary");
+        Logger.info("=".repeat(50));
+        
+        if (SUMMARY.isEmpty()) {
+            Logger.info("No operations were performed.");
+            return;
+        }
+        
+        for (String entry : SUMMARY) {
+            if (entry.startsWith("✅")) {
+                Logger.success(entry);
+            } else if (entry.startsWith("❌")) {
+                Logger.error(entry);
+            } else {
+                Logger.info(entry);
+            }
+        }
+    }
+    
+    /**
+     * Installs Homebrew if not already installed.
+     */
+    /* ---------- HOMEBREW ---------- */
+    private static boolean isInteractive() {
+        return System.console() != null && System.console().reader() != null;
+    }
+    
+    private static void installHomebrew() {
+        try {
+            // Check if Homebrew is already installed
+            if (exec("which brew")) {
+                print("✓ Homebrew is already installed");
+                return;
+            }
+            
+            print("Installing Homebrew...");
+            String installCmd = "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"";
+            
+            if (isInteractive()) {
+                // Run interactively if possible
+                ProcessBuilder pb = new ProcessBuilder("/bin/bash", "-c", installCmd);
+                pb.inheritIO();
+                Process process = pb.start();
+                int exitCode = process.waitFor();
+                
+                if (exitCode != 0) {
+                    throw new RuntimeException("Homebrew installation failed with exit code: " + exitCode);
+                }
+            } else {
+                // Non-interactive installation
+                exec(installCmd);
+            }
+            
+            // Add Homebrew to PATH
+            String shellConfig = System.getProperty("user.home") + "/.zshrc";
+            String pathCmd = "echo 'eval \"$(/opt/homebrew/bin/brew shellenv)\"' >> " + shellConfig;
+            exec(pathCmd);
+            
+            // Reload shell config
+            exec("source " + shellConfig);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to install Homebrew: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Installs Node.js and npm using Homebrew.
+     */
+    private static void installNodeNpm() throws Exception {
+        try {
+            // Install Node.js (which includes npm)
+            Logger.info("Installing Node.js and npm...");
+            executeCommand("brew install node", "Install Node.js and npm");
+            
+            // Verify installation
+            String nodeVersion = executeCommand("node --version", "Check Node.js version").trim();
+            String npmVersion = executeCommand("npm --version", "Check npm version").trim();
+            
+            Logger.success(String.format("Node.js %s and npm %s installed successfully", nodeVersion, npmVersion));
+            
+        } catch (Exception e) {
+            throw new IOException("Failed to install Node.js and npm: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Installs Google Chrome browser.
+     */
+    private static void installChrome() throws Exception {
+        try {
+            // Check if Chrome is already installed
+            String chromeVersion = executeCommand("/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --version || echo ''", 
+                "Check Chrome version");
+                
+            if (chromeVersion != null && !chromeVersion.isEmpty()) {
+                Logger.info("Google Chrome is already installed: " + chromeVersion.trim());
+                return;
+            }
+            
+            Logger.info("Downloading Google Chrome...");
+            String downloadCmd = "curl -L https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg -o " + CHROME_DMG;
+            executeCommand(downloadCmd, "Download Chrome");
+            
+            Logger.info("Mounting Chrome DMG...");
+            executeCommand("hdiutil attach " + CHROME_DMG, "Mount Chrome DMG");
+            
+            Logger.info("Installing Google Chrome...");
+            executeCommand("sudo cp -R /Volumes/Google\\ Chrome/Google\\ Chrome.app /Applications/", "Copy Chrome to Applications");
+            
+            Logger.info("Cleaning up...");
+            executeCommand("hdiutil detach /Volumes/Google\\ Chrome/", "Unmount Chrome DMG");
+            executeCommand("rm " + CHROME_DMG, "Remove Chrome DMG");
+            
+            Logger.success("Google Chrome installed successfully");
+            
+        } catch (Exception e) {
+            throw new IOException("Failed to install Google Chrome: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Installs Appium globally using npm.
+     */
+    private static void installAppium() throws Exception {
+        installNpmPackage("appium", "Appium");
+        
+        // Install appium-doctor to verify the setup
+        Logger.info("Installing appium-doctor...");
+        executeCommand("npm install -g appium-doctor", "Install appium-doctor");
+        
+        // Verify Appium installation
+        String appiumVersion = executeCommand("appium --version", "Check Appium version").trim();
+        Logger.success("Appium " + appiumVersion + " installed successfully");
+        
+        // Run appium-doctor to verify the setup
+        Logger.info("Running appium-doctor to verify the setup...");
+        executeCommand("appium-doctor --ios || true", "Run appium-doctor");
+    }
+    
+    /**
+     * Installs Selenium WebDriver.
+     */
+    private static void installSelenium() throws Exception {
+        installNpmPackage("selenium-webdriver", "Selenium WebDriver");
+    }
+    
+    /**
+     * Installs UiAutomator2 driver for Appium.
+     */
+    private static void installUiAutomator2() throws Exception {
+        installNpmPackage("appium-uiautomator2-driver", "UiAutomator2 driver");
+    }
+    
+    /**
+     * Installs XCUITest driver for Appium.
+     */
+    private static void installXcuitest() throws Exception {
+        installNpmPackage("appium-xcuitest-driver", "XCUITest driver");
+    }
+    
+    /**
+     * Helper method to install an npm package.
+     */
+    private static void installNpmPackage(String packageName, String displayName) throws Exception {
+        try {
+            Logger.info("Installing " + displayName + "...");
+            executeCommand("npm install -g " + packageName, "Install " + displayName);
+            
+            // Verify installation
+            String version = executeCommand(packageName + " --version || echo ''", "Check " + displayName + " version").trim();
+            if (!version.isEmpty()) {
+                Logger.success(displayName + " " + version + " installed successfully");
+            } else {
+                Logger.warning("Could not verify " + displayName + " installation");
+            }
+            
+        } catch (Exception e) {
+            throw new IOException("Failed to install " + displayName + ": " + e.getMessage(), e);
+        }
+    }
+
+    public static void main(String[] args) {
+        try {
+            print("\n" + "=".repeat(50));
+            print("🚀 Starting Automation Environment Setup");
+            print("=".repeat(50) + "\n");
+            
+            // Install required tools
+            installTool("Homebrew", () -> installHomebrew());
+            installTool("Node.js & npm", () -> installNodeNpm());
+            installTool("Chrome", () -> installChrome());
+            installTool("Appium", () -> installAppium());
+            installTool("Selenium", () -> installSelenium());
+            installTool("UiAutomator2", () -> installUiAutomator2());
+            installTool("XCUITest", () -> installXcuitest());
+            
+            print("\n" + "=".repeat(50));
+            print("✅ Setup completed successfully!");
+            print("=".repeat(50));
+            
+            // Print summary
+            if (!SUMMARY.isEmpty()) {
+                print("\nSummary of operations:");
+                SUMMARY.forEach(System.out::println);
+            }
+            
+        } catch (Exception e) {
+            print("\n❌ Error: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+            long startTime = System.currentTimeMillis();
+            installer.run();
+            long endTime = System.currentTimeMillis();
+            String duration = String.format("%.2f", (endTime - startTime) / 1000.0);
+            
+            String successMsg = "✅ " + name + " - Completed successfully in " + duration + "s";
+            print(successMsg);
+            SUMMARY.add(successMsg);
+        } catch (Exception e) {
+            String errorMsg = "❌ " + name + " - Failed: " + e.getMessage();
+            print(errorMsg);
+            SUMMARY.add(errorMsg);
+            
+            // Print stack trace for debugging
+            e.printStackTrace();
+            
+            if (isInteractive()) {
+                // In interactive mode, ask user if they want to continue
+                print("\n⚠️  An error occurred. Continue with the next step? (y/n): ");
+                Scanner scanner = new Scanner(System.in);
+                String response = scanner.nextLine().trim().toLowerCase();
+                
+                if (!response.equals("y") && !response.equals("yes")) {
+                    print("\n❌ Installation aborted by user.");
+                    System.exit(1);
+                }
+            } else {
+                // In non-interactive mode, log the error and continue
+                print("⚠️  Continuing with next step (non-interactive mode)...");
+            }
+        }
+    }
+    
+    private static void installHomebrew() throws Exception {
+        if (exec("which brew")) {
+            print("Homebrew is already installed. Updating...");
+            exec("brew update");
+            exec("brew upgrade");
+            return;
+        }
+        
+        print("Homebrew not found. Installing...");
+        
+        // Check for Xcode Command Line Tools (required for Homebrew)
+        if (!exec("xcode-select -p")) {
+            print("Xcode Command Line Tools not found. Installing...");
+            exec("xcode-select --install");
+            print("Please complete the Xcode Command Line Tools installation and run this script again.");
+            System.exit(1);
+        }
+        
+        // Install Homebrew
+        exec("/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"");
+        
+        // Add Homebrew to PATH if needed
+        if (!exec("which brew")) {
+            String shellConfig = System.getProperty("user.home") + "/.zshrc";
+            String brewPath = "/opt/homebrew/bin"; // Apple Silicon
+            if (System.getProperty("os.arch").equals("x86_64")) {
+                brewPath = "/usr/local/bin"; // Intel
+            }
+            
+            // Add Homebrew to PATH
+            String pathCommand = String.format("echo 'export PATH=\"%s:$PATH\"' >> %s && source %s", 
+                                             brewPath, shellConfig, shellConfig);
+            exec(pathCommand);
+            
+            // Verify installation
+            if (!exec("which brew")) {
+                throw new RuntimeException("Failed to add Homebrew to PATH. Please add it manually and try again.");
+            }
+        }
+        
+        // Verify Homebrew is working
+        if (!exec("brew --version")) {
+            throw new RuntimeException("Homebrew installation verification failed.");
+        }
+    }
+
+    /* ---------- NODE & NPM ---------- */
+    private static void installNodeNpm() throws Exception {
+        if (!exec("which node")) {
+            print("Installing Node.js and npm...");
+            exec("brew install node");
+        } else {
+            print("Updating Node.js and npm...");
+            exec("brew upgrade node");
+        }
+    }
+
+    /* ---------- CHROME ---------- */
+    private static void installChrome() throws Exception {
+        if (exec("/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --version")) {
+            print("Chrome is already installed");
+            return;
+        }
+        
+        print("Installing Chrome...");
+        new File(CHROME_DMG).delete();
+        
+        exec("curl -L -o " + CHROME_DMG + " https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg");
+        exec("hdiutil attach " + CHROME_DMG + " -nobrowse -quiet");
+        exec("cp -R /Volumes/Google\\ Chrome/Google\\ Chrome.app /Applications/");
+        exec("hdiutil detach /Volumes/Google\\ Chrome -quiet");
+        new File(CHROME_DMG).delete();
+    }
+
+    /* ---------- APPIUM ---------- */
+    private static void installAppium() throws Exception {
+        if (exec("which appium")) {
+            print("Updating Appium...");
+        } else {
+            print("Installing Appium...");
+        }
+        exec("npm install -g appium@latest");
+    }
+
+    /* ---------- SELENIUM ---------- */
+    private static void installSelenium() throws Exception {
+        print("Installing Selenium WebDriver...");
+        exec("npm install -g selenium-webdriver");
+    }
+
+    /* ---------- UiAutomator2 driver ---------- */
+    private static void installUiAutomator2() throws Exception {
+        print("Setting up UiAutomator2 driver...");
+        // Just install/update without checking first, as the check might fail even if installed
+        try {
+            exec("appium driver update uiautomator2");
+        } catch (Exception e) {
+            print("Updating UiAutomator2 failed, trying to install...");
+            exec("appium driver install uiautomator2");
+        }
+    }
+
+    /* ---------- XCUITest driver ---------- */
+    private static void installXcuitest() throws Exception {
+        print("Setting up XCUITest driver...");
+        // Just install/update without checking first, as the check might fail even if installed
+        try {
+            exec("appium driver update xcuitest");
+        } catch (Exception e) {
+            print("Updating XCUITest failed, trying to install...");
+            exec("appium driver install xcuitest");
+        }
+    }
+
+    // Helper methods
+    private static void print(String msg) {
+        System.out.println("[" + new Date() + "] " + msg);
+    }
+    
+    private static boolean exec(String command) throws Exception {
+        print("$ " + command);
+        Process process = Runtime.getRuntime().exec(new String[]{"sh", "-c", command});
+        
+        // Read output and error streams
+        BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
+        BufferedReader stdError = new BufferedReader(new InputStreamReader(process.getErrorStream()));
+        
+        // Read command output
+        String line;
+        StringBuilder output = new StringBuilder();
+        while ((line = stdInput.readLine()) != null) {
+            output.append(line).append("\n");
+            print(line);
+        }
+        
+        // Read command errors
+        StringBuilder errorOutput = new StringBuilder();
+        while ((line = stdError.readLine()) != null) {
+            errorOutput.append(line).append("\n");
+            print("ERROR: " + line);
+        }
+        
+        // Wait for process to complete
+        if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroy();
+            throw new RuntimeException("Command timed out after " + TIMEOUT_SECONDS + " seconds: " + command);
+        }
+        
+        int exitCode = process.exitValue();
+        if (exitCode != 0) {
+            throw new RuntimeException("Command failed with exit code " + exitCode + ": " + command + 
+                                   "\nError output: " + errorOutput.toString().trim());
+        }
+        
+        return true;
+    }
+}

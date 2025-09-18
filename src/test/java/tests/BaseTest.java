@@ -3,18 +3,22 @@ package tests;
 import io.appium.java_client.AppiumDriver;
 import io.appium.java_client.android.AndroidDriver;
 import io.appium.java_client.ios.IOSDriver;
-import org.openqa.selenium.WebDriverException;
+import org.apache.commons.io.FileUtils;
+import org.openqa.selenium.OutputType;
 import org.openqa.selenium.remote.DesiredCapabilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.annotations.*;
 import utils.AppiumServerManager;
 
+import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.time.Duration;
+import java.util.Date;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -22,7 +26,8 @@ import java.util.concurrent.TimeUnit;
  * Handles common setup and teardown operations for both Android and iOS tests.
  */
 public class BaseTest {
-    private static final Logger logger = LoggerFactory.getLogger(BaseTest.class);
+    // Logger instance for test logging
+    protected static final Logger logger = LoggerFactory.getLogger(BaseTest.class);
     
     // Appium server configuration
     protected static final String DEFAULT_APPIUM_SERVER = "http://127.0.0.1:4723";
@@ -41,6 +46,34 @@ public class BaseTest {
     private static final String SETTINGS_APP_RELATIVE_PATH = "/node_modules/appium-uiautomator2-driver/node_modules/io.appium.settings/apks/settings_apk-debug.apk";
     
     protected AppiumDriver driver;
+    
+    /**
+     * Takes a screenshot and saves it to the test-output/screenshots directory.
+     * @param screenshotName The name to give to the screenshot file
+     */
+    protected void takeScreenshot(String screenshotName) {
+        try {
+            // Create screenshots directory if it doesn't exist
+            File directory = new File("test-output/screenshots");
+            if (!directory.exists() && !directory.mkdirs()) {
+                logger.error("Failed to create directory: {}", directory.getAbsolutePath());
+                return;
+            }
+            
+            // Generate timestamp for unique filename
+            String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+            String fileName = String.format("%s_%s.png", screenshotName, timeStamp);
+            File destinationFile = new File(directory, fileName);
+            
+            // Take screenshot
+            File screenshotFile = driver.getScreenshotAs(OutputType.FILE);
+            FileUtils.copyFile(screenshotFile, destinationFile);
+            
+            System.out.printf("Screenshot saved to: %s%n", destinationFile.getAbsolutePath());
+        } catch (Exception e) {
+            System.err.printf("Failed to take screenshot: %s%n", e.getMessage());
+        }
+    }
 
     @BeforeSuite
     public void beforeSuite() {
@@ -53,7 +86,7 @@ public class BaseTest {
     public void afterSuite() {
         try {
             logger.info("Test suite teardown started");
-            AppiumServerManager.stopServer();
+            AppiumServerManager.getInstance().stopServer();
             logger.info("Test suite teardown completed");
         } catch (Exception e) {
             logger.error("Error during test suite teardown: {}", e.getMessage(), e);
@@ -220,7 +253,7 @@ public class BaseTest {
                 logger.debug("Quitting driver...");
                 driver.quit();
                 logger.info("Driver quit successfully");
-            } catch (WebDriverException e) {
+            } catch (Exception e) {
                 logger.error("Error while quitting the driver: {}", e.getMessage(), e);
             } finally {
                 driver = null;

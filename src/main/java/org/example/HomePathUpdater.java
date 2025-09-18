@@ -1,5 +1,7 @@
 package org.example;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.file.*;
 import java.nio.file.attribute.PosixFilePermission;
@@ -11,24 +13,25 @@ import static java.awt.Color.*;
 
 /**
  * HomePathUpdater
- * 
  * This class is responsible for managing the home path in the ~/.zshrc file.
  * It checks, installs, updates, and verifies the home path configuration.
  */
 public class HomePathUpdater {
     // Color constants for console output
+    private static final Logger logger = LoggerFactory.getLogger(HomePathUpdater.class);
     private static final String RESET = "\u001B[0m";
     private static final String CYAN = "\u001B[36m";
     private static final String CHECK_MARK = "✓";
     
-    private static final String ZSHRC_PATH = System.getProperty("user.home") + "/.zshrc";
-    private static final String BACKUP_DIR = System.getProperty("user.home") + "/.zsh_backups";
+    private static final String ZSHRC_PATH = String.format("%s/.zshrc", System.getProperty("user.home"));
+    private static final Path ZSHRC = Paths.get(ZSHRC_PATH);
+    private static final String BACKUP_DIR = String.format("%s/.zsh_backups", System.getProperty("user.home"));
     private static final List<String> SUMMARY = new ArrayList<>();
     private static final List<String> SUGGESTIONS = new ArrayList<>();
     
     // Patterns to identify path-related configurations
     private static final Pattern EXPORT_PATH_PATTERN = Pattern.compile("^export PATH=.*");
-    private static final Pattern SOURCE_PATTERN = Pattern.compile("^source\s+.*");
+    private static final Pattern SOURCE_PATTERN = Pattern.compile("^source\\s+.*");
     
     public static void main(String[] args) {
         try {
@@ -52,8 +55,7 @@ public class HomePathUpdater {
             
             print("\n✅ Home path configuration completed successfully!");
         } catch (Exception e) {
-            print("\n❌ Error: " + e.getMessage());
-            e.printStackTrace();
+            logger.error("An error occurred: {}", e.getMessage(), e);
             System.exit(1);
         }
     }
@@ -71,7 +73,7 @@ public class HomePathUpdater {
     }
     
     private static void processZshrcFile() throws IOException {
-        List<String> lines = Files.readAllLines(Paths.get(ZSHRC_PATH));
+        List<String> lines = Files.readAllLines(ZSHRC);
         boolean modified = false;
         
         // Check for existing PATH export
@@ -129,7 +131,7 @@ public class HomePathUpdater {
         
         // Write changes back to file if modified
         if (modified) {
-            Files.write(Paths.get(ZSHRC_PATH), lines);
+            Files.write(ZSHRC, lines);
             print("\n🔍 Verifying changes...");
             verifyZshrcFile();
         } else {
@@ -141,7 +143,10 @@ public class HomePathUpdater {
         print("\n🔍 Verifying .zshrc file...");
         
         // Read the file again to ensure we're seeing the latest changes
-        List<String> lines = Files.readAllLines(Paths.get(ZSHRC_PATH));
+        List<String> lines = Files.readAllLines(ZSHRC);
+        
+        // Clear any previous suggestions
+        SUGGESTIONS.clear();
         
         // Find the PATH export line
         Optional<String> pathLine = lines.stream()
@@ -150,12 +155,12 @@ public class HomePathUpdater {
             
         if (pathLine.isPresent()) {
             String pathValue = pathLine.get();
-            print("ℹ️  Found PATH export: " + pathValue);
+            print(String.format("ℹ️  Found PATH export: %s", pathValue));
             
             // Check for different possible path formats
             boolean containsLocalBin = pathValue.contains("$HOME/.local/bin") || 
                                      pathValue.contains("~/.local/bin") ||
-                                     pathValue.contains(System.getProperty("user.home") + "/.local/bin");
+                                     pathValue.contains(String.format("%s/.local/bin", System.getProperty("user.home")));
             
             if (containsLocalBin) {
                 print("✅ Verified: PATH export includes user's local bin directory");
@@ -165,7 +170,7 @@ public class HomePathUpdater {
                     (pathValue.contains("'$") && pathValue.contains("PATH'"))) {
                     print("✅ Verified: PATH export is properly quoted");
                 } else {
-                    print("⚠️  Warning: PATH export might not be properly quoted. Consider using: \"$HOME/.local/bin:$PATH\"");
+                    suggestion("Consider using double quotes around your PATH export: \"$HOME/.local/bin:$PATH\"");
                 }
                 
                 // Check for duplicate PATH entries
@@ -174,15 +179,15 @@ public class HomePathUpdater {
                     .count();
                     
                 if (pathCount > 1) {
-                    print("⚠️  Warning: Found " + pathCount + " PATH exports. There should be only one.");
+                    suggestion(String.format("Found %d PATH exports. Consider consolidating them into a single export statement.", pathCount));
                 }
                 
                 // Verify the file is readable and writable
                 File zshrc = new File(ZSHRC_PATH);
                 if (!zshrc.canRead()) {
-                    print("❌ Error: Cannot read .zshrc file");
+                    suggestion("Cannot read .zshrc file. Check file permissions with: chmod u+r ~/.zshrc");
                 } else if (!zshrc.canWrite()) {
-                    print("❌ Error: Cannot write to .zshrc file");
+                    suggestion("Cannot write to .zshrc file. Check file permissions with: chmod u+w ~/.zshrc");
                 } else {
                     print("✅ Verified: .zshrc has correct permissions");
                 }
@@ -190,7 +195,13 @@ public class HomePathUpdater {
                 // Check if the file ends with a newline
                 String fileContent = String.join("\n", lines);
                 if (!fileContent.endsWith("\n") && !lines.isEmpty()) {
-                    print("⚠️  Warning: .zshrc does not end with a newline. Some shells might have issues.");
+                    suggestion("Your .zshrc file doesn't end with a newline. This might cause issues. Add a newline at the end of the file.");
+                }
+                
+                // Print any suggestions if they exist
+                if (!SUGGESTIONS.isEmpty()) {
+                    print("\n💡 Suggestions for improvement:");
+                    SUGGESTIONS.forEach(s -> print(String.format("  • %s", s)));
                 }
                 
                 return; // Success
@@ -202,7 +213,7 @@ public class HomePathUpdater {
         print("   Expected to find a line like one of these:");
         print("   export PATH=\"$HOME/.local/bin:$PATH\"");
         print("   export PATH=~/.local/bin:$PATH");
-        print("   export PATH=" + System.getProperty("user.home") + "/.local/bin:$PATH");
+        print(String.format("   export PATH=%s/.local/bin:$PATH", System.getProperty("user.home")));
         print("\n   You can manually verify by running:");
         print("   cat ~/.zshrc | grep PATH=");
         print("   or");
@@ -214,24 +225,74 @@ public class HomePathUpdater {
         File backupDir = new File(BACKUP_DIR);
         if (!backupDir.exists()) {
             if (backupDir.mkdirs()) {
-                info("Created backup directory: " + BACKUP_DIR);
+                info(String.format("Created backup directory: %s", BACKUP_DIR));
             } else {
-                warning("Failed to create backup directory: " + BACKUP_DIR);
+                warning(String.format("Failed to create backup directory: %s", BACKUP_DIR));
             }
         }
     }
     
+    private static final int MAX_BACKUPS = 10;  // Maximum number of backups to keep
+    
+    /**
+     * Creates a backup of the .zshrc file with timestamp and manages backup rotation.
+     * @throws IOException if backup creation fails
+     */
     private static void createBackup() throws IOException {
-        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        String backupPath = BACKUP_DIR + "/zshrc_backup_" + timestamp;
-        
         File original = new File(ZSHRC_PATH);
         if (!original.exists()) {
-            return; // No need to backup if file doesn't exist yet
+            info("No existing .zshrc file found. No backup needed.");
+            return;
         }
         
-        Files.copy(original.toPath(), Paths.get(backupPath), StandardCopyOption.REPLACE_EXISTING);
-        info("Created backup at: " + backupPath);
+        // Ensure backup directory exists
+        createBackupDirectory();
+        
+        // Create timestamped backup
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        String backupPath = String.format("%s/zshrc_backup_%s", BACKUP_DIR, timestamp);
+        
+        try {
+            // Create the backup
+            Files.copy(original.toPath(), Paths.get(backupPath), StandardCopyOption.REPLACE_EXISTING);
+            info(String.format("Created backup at: %s", backupPath));
+            
+            // Clean up old backups if necessary
+            cleanUpOldBackups();
+            
+        } catch (IOException e) {
+            String errorMsg = String.format("Failed to create backup: %s", e.getMessage());
+            error(errorMsg);
+            throw new IOException(errorMsg, e);
+        }
+    }
+    
+    /**
+     * Cleans up old backups, keeping only the most recent MAX_BACKUPS files.
+     */
+    private static void cleanUpOldBackups() {
+        try {
+            File backupDir = new File(BACKUP_DIR);
+            File[] backupFiles = backupDir.listFiles((dir, name) -> name.startsWith("zshrc_backup_"));
+            
+            if (backupFiles == null || backupFiles.length <= MAX_BACKUPS) {
+                return; // No cleanup needed
+            }
+            
+            // Sort by last modified time (oldest first)
+            Arrays.sort(backupFiles, Comparator.comparingLong(File::lastModified));
+            
+            // Delete oldest backups
+            for (int i = 0; i < backupFiles.length - MAX_BACKUPS; i++) {
+                if (backupFiles[i].delete()) {
+                    info(String.format("Cleaned up old backup: %s", backupFiles[i].getName()));
+                } else {
+                    warning(String.format("Failed to clean up old backup: %s", backupFiles[i].getName()));
+                }
+            }
+        } catch (Exception e) {
+            warning("Failed to clean up old backups: %s".formatted(e.getMessage()));
+        }
     }
     
     // Output formatting methods
@@ -240,35 +301,35 @@ public class HomePathUpdater {
     }
     
     private static void printHeader(String message) {
-        print("\n" + BLUE + "=".repeat(80) + RESET);
-        print(BLUE + message + RESET);
+        print(String.format("%n%s%s%s", BLUE, "=".repeat(80), RESET));
+        print(String.format("%s%s%s", BLUE, message, RESET));
         print(BLUE + "=".repeat(80) + RESET);
     }
     
     private static void printSection(String message) {
-        print("\n" + CYAN + message + RESET);
-        print(CYAN + "-".repeat(Math.min(80, message.length())) + RESET);
+        print(String.format("%n%s%s%s", CYAN, message, RESET));
+        print(String.format("%s%s", CYAN, "-".repeat(Math.min(80, message.length())) + RESET));
     }
     
     private static void success(String message) {
-        SUMMARY.add(GREEN + CHECK_MARK + " " + message + RESET);
-        print(GREEN + "[SUCCESS] " + message + RESET);
+        SUMMARY.add(String.format("%s%s %s%s", GREEN, CHECK_MARK, message, RESET));
+        print(String.format("%s[SUCCESS] %s%s", GREEN, message, RESET));
     }
     
     private static void info(String message) {
-        print(BLUE + "[INFO] " + message + RESET);
+        print(String.format("%s[INFO] %s%s", BLUE, message, RESET));
     }
     
     private static void warning(String message) {
-        print(YELLOW + "[WARNING] " + message + RESET);
+        print(String.format("%s[WARNING] %s%s", YELLOW, message, RESET));
     }
     
     private static void error(String message) {
-        print(RED + "[ERROR] " + message + RESET);
+        print(String.format("%s[ERROR] %s%s", RED, message, RESET));
     }
     
     private static void suggestion(String suggestion) {
         SUGGESTIONS.add(suggestion);
-        print(YELLOW + "  → " + suggestion + RESET);
+        print(String.format("%s  → %s%s", YELLOW, suggestion, RESET));
     }
 }

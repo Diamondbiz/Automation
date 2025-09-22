@@ -205,6 +205,13 @@
             <version>32.1.3-jre</version>
         </dependency>
         
+        <!-- WebDriverManager for automatic driver management -->
+        <dependency>
+            <groupId>io.github.bonigarcia</groupId>
+            <artifactId>webdrivermanager</artifactId>
+            <version>5.6.3</version>
+        </dependency>
+        
         <!-- Bouncy Castle for additional security providers -->
         <dependency>
             <groupId>org.bouncycastle</groupId>

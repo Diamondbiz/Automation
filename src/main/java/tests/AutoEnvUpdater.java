@@ -1,4 +1,4 @@
-package org.example;
+package tests;
 
 import java.io.*;
 import java.util.*;
@@ -23,14 +23,34 @@ public class AutoEnvUpdater {
                 %s
                 """.formatted(separator, separator));
             
-            // Install required tools
-            installTool("Homebrew", AutoEnvUpdater::installHomebrew);
-            installTool("Node.js & npm", AutoEnvUpdater::installNodeNpm);
-            installTool("Chrome", AutoEnvUpdater::installChrome);
-            installTool("Appium", AutoEnvUpdater::installAppium);
-            installTool("Selenium", AutoEnvUpdater::installSelenium);
-            installTool("UiAutomator2", AutoEnvUpdater::installUiAutomator2);
-            installTool("XCUITest", AutoEnvUpdater::installXcuitest);
+            // Install required tools with their respective checkers
+            installTool("Homebrew", 
+                AutoEnvUpdater::installHomebrew,
+                AutoEnvUpdater::checkHomebrew);
+                
+            installTool("Node.js & npm", 
+                AutoEnvUpdater::installNodeNpm,
+                AutoEnvUpdater::checkNodeNpm);
+                
+            installTool("Chrome", 
+                AutoEnvUpdater::installChrome,
+                AutoEnvUpdater::checkChrome);
+                
+            installTool("Appium", 
+                AutoEnvUpdater::installAppium,
+                AutoEnvUpdater::checkAppium);
+                
+            installTool("Selenium", 
+                AutoEnvUpdater::installSelenium,
+                AutoEnvUpdater::checkSelenium);
+                
+            installTool("UiAutomator2", 
+                AutoEnvUpdater::installUiAutomator2,
+                AutoEnvUpdater::checkUiAutomator2);
+                
+            installTool("XCUITest", 
+                AutoEnvUpdater::installXcuitest,
+                AutoEnvUpdater::checkXcuitest);
             
             print("""
                 
@@ -55,26 +75,53 @@ public class AutoEnvUpdater {
         }
     }
 
-    private static void installTool(String name, Runnable installer) {
+    private static void installTool(String name, Runnable installer, Runnable checker) {
         String separator = "=".repeat(50);
         print("""
             
             %s
-            🔧 SETTING UP: %s
+            🔧 CHECKING: %s
             %s""".formatted(separator, name, separator));
         
         try {
+            // First check if already installed
+            if (checker != null) {
+                try {
+                    checker.run();
+                    print("✅ %s is already installed and up to date. Skipping installation.".formatted(name));
+                    return;
+                } catch (Exception e) {
+                    print("ℹ️ %s needs to be installed or updated: %s".formatted(name, e.getMessage()));
+                }
+            }
+            
+            // If not installed or checker not provided, proceed with installation
+            print("\n🔧 INSTALLING: %s".formatted(name));
             long startTime = System.currentTimeMillis();
             installer.run();
             long endTime = System.currentTimeMillis();
             String duration = String.format("%.2f", (endTime - startTime) / 1000.0);
             
-            String successMsg = "✅ %s - Completed successfully in %ss".formatted(name, duration);
-            print(successMsg);
-            SUMMARY.add(successMsg);
+            // Verify installation after completion
+            if (checker != null) {
+                try {
+                    checker.run();
+                    String successMsg = "✅ %s - Installed/Updated successfully in %ss".formatted(name, duration);
+                    print(successMsg);
+                    SUMMARY.add(successMsg);
+                } catch (Exception e) {
+                    String warningMsg = "⚠️ %s - Installation completed but verification failed: %s".formatted(name, e.getMessage());
+                    print(warningMsg);
+                    SUMMARY.add(warningMsg);
+                }
+            } else {
+                String successMsg = "✅ %s - Installation completed in %ss (no verification)".formatted(name, duration);
+                print(successMsg);
+                SUMMARY.add(successMsg);
+            }
             
         } catch (Exception e) {
-            String errorMsg = "❌ %s - Failed: %s".formatted(name, e.getMessage());
+            String errorMsg = "❌ %s - Installation failed: %s".formatted(name, e.getMessage());
             print(errorMsg);
             SUMMARY.add(errorMsg);
             throw e;
@@ -217,6 +264,59 @@ public class AutoEnvUpdater {
         }
     }
 
+    /* ---------- CHECKER METHODS ---------- */
+    private static void checkHomebrew() {
+        if (!exec("which brew")) {
+            throw new RuntimeException("Homebrew is not installed or not in PATH");
+        }
+        print("Homebrew is installed at: " + execWithOutput("which brew").trim());
+    }
+    
+    private static void checkNodeNpm() {
+        if (!exec("which node")) {
+            throw new RuntimeException("Node.js is not installed or not in PATH");
+        }
+        print("Node.js version: " + execWithOutput("node --version").trim());
+        print("npm version: " + execWithOutput("npm --version").trim());
+    }
+    
+    private static void checkChrome() {
+        if (System.getProperty("os.name").toLowerCase().contains("mac")) {
+            if (!exec("osascript -e 'exists application \"Google Chrome\"'")) {
+                throw new RuntimeException("Google Chrome is not installed");
+            }
+            print("Google Chrome is installed");
+        } else {
+            print("Chrome check not implemented for this OS");
+        }
+    }
+    
+    private static void checkAppium() {
+        if (!exec("which appium")) {
+            throw new RuntimeException("Appium is not installed or not in PATH");
+        }
+        print("Appium version: " + execWithOutput("appium --version").trim());
+    }
+    
+    private static void checkSelenium() {
+        // Selenium is a Java library, so we can't easily check its installation from the command line
+        print("Note: Selenium is a Java library and will be managed by Maven");
+    }
+    
+    private static void checkUiAutomator2() {
+        if (!exec("npm list -g appium-uiautomator2-driver")) {
+            throw new RuntimeException("Appium UiAutomator2 driver is not installed globally");
+        }
+        print("UiAutomator2 driver is installed");
+    }
+    
+    private static void checkXcuitest() {
+        if (!exec("npm list -g appium-xcuitest-driver")) {
+            throw new RuntimeException("Appium XCUITest driver is not installed globally");
+        }
+        print("XCUITest driver is installed");
+    }
+    
     /* ---------- HELPER METHODS ---------- */
     private static void print(String message) {
         System.out.println(message);
@@ -229,14 +329,47 @@ public class AutoEnvUpdater {
             
             Process process = processBuilder.start();
             
+            // Read the output silently for exec (used in checks)
+            try (InputStream inputStream = process.getInputStream();
+                 InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
+                 BufferedReader reader = new BufferedReader(inputStreamReader)) {
+                
+                // Read all lines but don't print them for silent checks
+                while (reader.readLine() != null) {
+                    // Just consume the output
+                }
+            }
+            
+            // Wait for the process to complete
+            boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroy();
+                return false;
+            }
+            
+            return process.exitValue() == 0;
+            
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    
+    private static String execWithOutput(String command) {
+        try {
+            ProcessBuilder processBuilder = new ProcessBuilder("/bin/bash", "-c", command);
+            processBuilder.redirectErrorStream(true);
+            
+            Process process = processBuilder.start();
+            
             // Read the output
+            StringBuilder output = new StringBuilder();
             try (InputStream inputStream = process.getInputStream();
                  InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
                  BufferedReader reader = new BufferedReader(inputStreamReader)) {
                 
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    print("  | %s".formatted(line));
+                    output.append(line).append("\n");
                 }
             }
             
@@ -248,7 +381,11 @@ public class AutoEnvUpdater {
             }
             
             int exitCode = process.exitValue();
-            return exitCode == 0;
+            if (exitCode != 0) {
+                throw new RuntimeException(String.format("Command failed with exit code %d: %s", exitCode, command));
+            }
+            
+            return output.toString().trim();
             
         } catch (Exception e) {
             throw new RuntimeException(String.format("Command failed: %s - %s", command, e.getMessage()), e);
